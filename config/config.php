@@ -1,8 +1,8 @@
 <?php
 // Datenbank-Konfiguration
 define('DB_HOST', 'localhost');
-define('DB_USER', 'webradio_user');
-define('DB_PASS', 'your_password');
+define('DB_USER', 'root');
+define('DB_PASS', '');
 define('DB_NAME_MAIN', 'webradio_main');       // Database 0
 define('DB_NAME_RADIO', 'webradio_radio');     // Database 1
 define('DB_CHARSET', 'utf8mb4');
