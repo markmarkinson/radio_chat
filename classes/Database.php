@@ -1,27 +1,20 @@
 <?php
 class Database {
     public $connection;
-    public $database;
-    public array $databases;
     private $host;
     private $username;
     private $password;
+    private $database;
     private $charset;
+    private $lastStatement;
 
     public function __construct() {
         $this->host = DB_HOST;
         $this->username = DB_USER;
         $this->password = DB_PASS;
+        $this->database = DB_NAME;
         $this->charset = DB_CHARSET;
         
-        // Verfügbare Datenbanken (wie im Original)
-        $this->databases = [
-            0 => DB_NAME_MAIN,   // Haupt-DB für Accounts
-            1 => DB_NAME_RADIO   // Radio-DB für Radio-spezifische Daten
-        ];
-        
-        // Standardmäßig zur ersten Datenbank verbinden
-        $this->database = $this->databases[0];
         $this->connect();
     }
 
@@ -37,25 +30,9 @@ class Database {
             
             $this->connection = new PDO($dsn, $this->username, $this->password, $options);
         } catch (PDOException $e) {
-            die("Datenbankverbindung fehlgeschlagen: " . $e->getMessage());
+            error_log("Datenbankverbindung fehlgeschlagen: " . $e->getMessage());
+            die("Datenbankfehler - bitte versuchen Sie es später erneut.");
         }
-    }
-
-    /**
-     * Datenbank wechseln (wie im Original-System)
-     */
-    public function switchDatabase(string $dbName): bool {
-        if ($this->database !== $dbName) {
-            $this->database = $dbName;
-            try {
-                $this->connection->exec("USE `{$dbName}`");
-                return true;
-            } catch (PDOException $e) {
-                error_log("Database switch failed: " . $e->getMessage());
-                return false;
-            }
-        }
-        return true;
     }
 
     /**
@@ -72,13 +49,12 @@ class Database {
     }
 
     /**
-     * Einzelnen Datensatz abrufen (wie fetchArray im Original)
+     * Einzelnen Datensatz abrufen
      */
     public function fetchArray(string $sql, $params = []): array {
         try {
             $stmt = $this->connection->prepare($sql);
             
-            // Parameter können als Array oder einzelner Wert übergeben werden
             if (!is_array($params)) {
                 $params = [$params];
             }
@@ -92,11 +68,10 @@ class Database {
     }
 
     /**
-     * Alle Datensätze abrufen (wie fetchAll im Original)
+     * Alle Datensätze abrufen
      */
     public function fetchAll(string $sql = "", array $params = []): array {
         try {
-            // Wenn kein SQL übergeben wurde, vorherige Query wiederverwenden
             if (empty($sql)) {
                 if (!isset($this->lastStatement)) {
                     return [];
@@ -106,7 +81,7 @@ class Database {
 
             $stmt = $this->connection->prepare($sql);
             $stmt->execute($params);
-            $this->lastStatement = $stmt; // Für nachfolgende fetchAll() Aufrufe ohne Parameter
+            $this->lastStatement = $stmt;
             
             return $stmt->fetchAll();
         } catch (PDOException $e) {
@@ -155,6 +130,56 @@ class Database {
      */
     public function rollback(): bool {
         return $this->connection->rollBack();
+    }
+
+    /**
+     * Einstellung aus der Datenbank abrufen
+     */
+    public function getSetting(string $category, string $key, $default = null) {
+        $result = $this->fetchArray(
+            "SELECT value, type FROM " . TBL_SETTINGS . " WHERE category = ? AND `key` = ?",
+            [$category, $key]
+        );
+        
+        if (empty($result)) {
+            return $default;
+        }
+        
+        // Typ-Konvertierung
+        switch ($result['type']) {
+            case 'boolean':
+                return filter_var($result['value'], FILTER_VALIDATE_BOOLEAN);
+            case 'integer':
+                return (int) $result['value'];
+            case 'json':
+                return json_decode($result['value'], true);
+            default:
+                return $result['value'];
+        }
+    }
+
+    /**
+     * Einstellung in der Datenbank setzen
+     */
+    public function setSetting(string $category, string $key, $value, string $type = 'string'): bool {
+        // Wert entsprechend dem Typ konvertieren
+        switch ($type) {
+            case 'boolean':
+                $value = $value ? 'true' : 'false';
+                break;
+            case 'json':
+                $value = json_encode($value);
+                break;
+            default:
+                $value = (string) $value;
+        }
+        
+        return $this->query(
+            "INSERT INTO " . TBL_SETTINGS . " (category, `key`, value, type, updated_at) 
+             VALUES (?, ?, ?, ?, NOW()) 
+             ON DUPLICATE KEY UPDATE value = VALUES(value), type = VALUES(type), updated_at = NOW()",
+            [$category, $key, $value, $type]
+        );
     }
 
     /**

@@ -20,10 +20,11 @@ class Router {
             'logout' => ['controller' => 'AuthController', 'method' => 'logout'],
             'register' => ['controller' => 'AuthController', 'method' => 'register'],
             'dashboard' => ['controller' => 'DashboardController', 'method' => 'index', 'auth' => true],
-            'admin' => ['controller' => 'AdminController', 'method' => 'index', 'auth' => true, 'role' => ADMINSTATOR],
-            'users' => ['controller' => 'UserController', 'method' => 'index', 'auth' => true],
-            'profile' => ['controller' => 'ProfileController', 'method' => 'index', 'auth' => true],
-            'sendeplan' => ['controller' => 'SendeplanController', 'method' => 'index'],
+            'admin' => ['controller' => 'AdminController', 'method' => 'index', 'auth' => true, 'permission' => ['admin', 'dashboard']],
+            'users' => ['controller' => 'UserController', 'method' => 'index', 'auth' => true, 'permission' => ['users', 'read']],
+            'profile' => ['controller' => 'ProfileController', 'method' => 'index', 'auth' => true, 'permission' => ['profile', 'read']],
+            'settings' => ['controller' => 'SettingsController', 'method' => 'index', 'auth' => true, 'permission' => ['admin', 'settings']],
+            'modules' => ['controller' => 'ModuleController', 'method' => 'index', 'auth' => true, 'permission' => ['admin', 'modules']],
             'api' => ['controller' => 'ApiController', 'method' => 'handle'],
         ];
     }
@@ -32,7 +33,6 @@ class Router {
         // Route normalisieren
         $route = trim($route, '/');
         
-        // Standard-Route wenn leer
         if (empty($route)) {
             $route = 'home';
         }
@@ -52,10 +52,13 @@ class Router {
                 return;
             }
 
-            // Rolle prüfen
-            if (isset($routeConfig['role']) && !$this->auth->hasRole($routeConfig['role'])) {
-                $this->handleUnauthorized();
-                return;
+            // Permission prüfen (neue Methode)
+            if (isset($routeConfig['permission'])) {
+                [$module, $permissionAction] = $routeConfig['permission'];
+                if (!$this->auth->hasPermission($module, $permissionAction)) {
+                    $this->handleUnauthorized();
+                    return;
+                }
             }
         }
 
@@ -67,7 +70,6 @@ class Router {
         $controllerFile = BASE_PATH . 'controllers/' . $controllerName . '.php';
         
         if (!file_exists($controllerFile)) {
-            // Fallback: Einfache Template-Ausgabe
             $this->handleSimpleRoute($controllerName, $action);
             return;
         }
@@ -82,7 +84,7 @@ class Router {
         $controller = new $controllerName($this->database, $this->template, $this->auth);
         
         if (!method_exists($controller, $action)) {
-            $action = 'index'; // Fallback zur index-Methode
+            $action = 'index';
         }
 
         if (method_exists($controller, $action)) {
@@ -93,10 +95,7 @@ class Router {
     }
 
     private function handleSimpleRoute(string $controllerName, string $action): void {
-        // Einfache Template-basierte Routen (wie im Original-System)
         $templateName = strtolower(str_replace('Controller', '', $controllerName));
-        
-        // Template-Datei suchen
         $templateFile = TEMPLATE_PATH . $templateName . '.tpl';
         
         if (file_exists($templateFile)) {
@@ -129,4 +128,3 @@ class Router {
         $this->template->error("Serverfehler", "Es ist ein interner Fehler aufgetreten.", "?route=home");
     }
 }
-?>
