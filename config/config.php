@@ -6,8 +6,8 @@
 
 // Datenbank-Konfiguration (Single Database)
 define('DB_HOST', 'localhost');
-define('DB_USER', 'webradio_user');
-define('DB_PASS', 'your_password');
+define('DB_USER', 'root');
+define('DB_PASS', '');
 define('DB_NAME', 'webradio_system');  // Nur eine Datenbank
 define('DB_CHARSET', 'utf8mb4');
 
