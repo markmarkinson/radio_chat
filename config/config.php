@@ -4,6 +4,10 @@
 // Angepasst für Single Database System
 // ============================================================================
 
+if (session_status() === PHP_SESSION_NONE) {
+    SecureSession::initializeEarly();
+}
+
 // Datenbank-Konfiguration (Single Database)
 define('DB_HOST', 'localhost');
 define('DB_USER', 'root');
