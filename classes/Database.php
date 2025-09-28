@@ -44,6 +44,7 @@ class Database
             PDO::ATTR_ERRMODE            => PDO::ERRMODE_SILENT,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES   => false,
+            PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES {$this->charset}"
         ];
 
         // Wenn der PDO-Konstruktor fehlschlägt, wirft er eine PDOException.
