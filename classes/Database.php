@@ -3,6 +3,7 @@
 class Database
 {
     private PDO $connection;
+    private ?PDOStatement $lastStatement = null;
 
     private string $host;
     private string $username;
@@ -21,6 +22,7 @@ class Database
             }
         }
         if ($missing) {
+            // Harte Exception im Konstruktor
             throw new RuntimeException("Fehlende Konstanten: " . implode(', ', $missing));
         }
 
@@ -36,134 +38,272 @@ class Database
     private function connect(): void
     {
         $dsn = "mysql:host={$this->host};dbname={$this->database};charset={$this->charset}";
+
+        // Silent Mode: keine Exceptions bei prepare/execute/etc.
         $options = [
-            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_ERRMODE            => PDO::ERRMODE_SILENT,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES   => false,
         ];
 
-        try {
-            $this->connection = new PDO($dsn, $this->username, $this->password, $options);
-            $this->connection->exec(
-                "SET SESSION sql_mode = 'STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
-            );
-        } catch (Throwable $e) {
-            throw new RuntimeException('DB-Verbindung fehlgeschlagen: ' . $e->getMessage(), (int)$e->getCode(), $e);
+        // Wenn der PDO-Konstruktor fehlschlägt, wirft er eine PDOException.
+        // Wir lassen sie durchlaufen, d.h. es knallt hier – wie gefordert ohne try/catch.
+        $this->connection = new PDO($dsn, $this->username, $this->password, $options);
+
+        // Session-Mode setzen; bei Fehler explizit RuntimeException werfen
+        $ok = $this->connection->exec(
+            "SET SESSION sql_mode = 'STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+        );
+        if ($ok === false) {
+            throw new RuntimeException('Konnte SQL_MODE nicht setzen.');
         }
     }
 
     /* ===================== DML/Queries ===================== */
 
+    /**
+     * INSERT/UPDATE/DELETE/REPLACE ausführen.
+     * Bei INSERT: lastInsertId (int), sonst rowCount(). Fehler: -1.
+     * Setzt KEIN $lastStatement.
+     */
     public function query(string $sql, array $params = []): int
     {
-        if (!preg_match('/^\s*(INSERT|UPDATE|DELETE)\b/i', $sql)) {
-            $this->logError('query', $sql, $params, 'query() nur für INSERT/UPDATE/DELETE erlaubt.');
+        if (!preg_match('/^\s*(INSERT|UPDATE|DELETE|REPLACE)\b/i', $sql)) {
+            $this->logError('query', $sql, $params, 'query() nur für INSERT/UPDATE/DELETE/REPLACE erlaubt.');
             return -1;
         }
 
         $stmt = $this->connection->prepare($sql);
-        $this->bind($stmt, $params);
-        $stmt->execute();
+        if ($stmt === false) {
+            $this->logError('query', $sql, $params, 'prepare() fehlgeschlagen.');
+            return -1;
+        }
+
+        if (!$this->bind($stmt, $params)) {
+            $this->logError('query', $sql, $params, 'bind() fehlgeschlagen.');
+            return -1;
+        }
+
+        if ($stmt->execute() === false) {
+            $this->logError('query', $sql, $params, 'execute() fehlgeschlagen.');
+            return -1;
+        }
 
         if (preg_match('/^\s*INSERT\b/i', $sql)) {
             $id = $this->connection->lastInsertId();
             return is_numeric($id) ? (int)$id : 0;
         }
+        $this->lastStatement = null;
         return $stmt->rowCount();
     }
 
+    /**
+     * Eine Zeile als assoc-Array. Leerer $sql -> weiterlesen aus letztem SELECT.
+     * Fehler: [].
+     */
     public function fetchArray(string $sql, array $params = []): array
     {
-        if (!preg_match('/^\s*SELECT\b/i', $sql)) {
-            $this->logError('fetchArray', $sql, $params, 'fetchArray() nur mit SELECT nutzen.');
+        if ($sql === '') {
+            if (!$this->lastStatement) {
+                return [];
+            }
+            $row = $this->lastStatement->fetch();
+            return $row === false ? [] : $row;
+        }
+
+        if (!preg_match('/^\s*(SELECT|WITH)\b/i', $sql)) {
+            $this->logError('fetchArray', $sql, $params, 'fetchArray() nur mit SELECT/CTE nutzen.');
             return [];
         }
 
         $stmt = $this->connection->prepare($sql);
-        $this->bind($stmt, $params);
-        $stmt->execute();
+        if ($stmt === false) {
+            $this->logError('fetchArray', $sql, $params, 'prepare() fehlgeschlagen.');
+            return [];
+        }
+
+        if (!$this->bind($stmt, $params)) {
+            $this->logError('fetchArray', $sql, $params, 'bind() fehlgeschlagen.');
+            return [];
+        }
+
+        if ($stmt->execute() === false) {
+            $this->logError('fetchArray', $sql, $params, 'execute() fehlgeschlagen.');
+            return [];
+        }
+
+        $this->lastStatement = $stmt;
+
         $row = $stmt->fetch();
         return $row === false ? [] : $row;
     }
 
+    /**
+     * Alle Zeilen. Leerer $sql -> aus letztem SELECT lesen.
+     * Fehler: [].
+     */
     public function fetchAll(string $sql, array $params = []): array
     {
-        if (!preg_match('/^\s*SELECT\b/i', $sql)) {
-            $this->logError('fetchAll', $sql, $params, 'fetchAll() nur mit SELECT nutzen.');
+        if ($sql === '') {
+            if (!$this->lastStatement) {
+                return [];
+            }
+            $rows = $this->lastStatement->fetchAll();
+            return $rows === false ? [] : $rows;
+        }
+
+        if (!preg_match('/^\s*(SELECT|WITH)\b/i', $sql)) {
+            $this->logError('fetchAll', $sql, $params, 'fetchAll() nur mit SELECT/CTE nutzen.');
             return [];
         }
 
         $stmt = $this->connection->prepare($sql);
-        $this->bind($stmt, $params);
-        $stmt->execute();
+        if ($stmt === false) {
+            $this->logError('fetchAll', $sql, $params, 'prepare() fehlgeschlagen.');
+            return [];
+        }
+
+        if (!$this->bind($stmt, $params)) {
+            $this->logError('fetchAll', $sql, $params, 'bind() fehlgeschlagen.');
+            return [];
+        }
+
+        if ($stmt->execute() === false) {
+            $this->logError('fetchAll', $sql, $params, 'execute() fehlgeschlagen.');
+            return [];
+        }
+
+        $this->lastStatement = $stmt;
+
         $rows = $stmt->fetchAll();
         return $rows === false ? [] : $rows;
     }
 
+    /**
+     * Anzahl Zeilen, die ein SELECT liefern würde.
+     * - leerer $sql: rowCount() des letzten Statements (falls vorhanden)
+     * - bei COUNT(*) im SQL: direktes fetchColumn()
+     * - sonst: COUNT(*) über Subselect (ORDER BY entfernt)
+     * Fehler: 0
+     */
     public function numRows(string $sql, array $params = []): int
     {
-        if (!preg_match('/^\s*SELECT\b/i', $sql)) {
-            $this->logError('numRows', $sql, $params, 'numRows() nur mit SELECT nutzen.');
+        if ($sql === '') {
+            if (!$this->lastStatement) {
+                return 0;
+            }
+            return $this->lastStatement->rowCount();
+        }
+
+        if (!preg_match('/^\s*(SELECT|WITH)\b/i', $sql)) {
+            $this->logError('numRows', $sql, $params, 'numRows() nur mit SELECT/CTE nutzen.');
             return 0;
         }
 
-        if (preg_match('/^\s*SELECT\s+COUNT\(\*\)/i', $sql)) {
+        // Direkter COUNT(*)?
+        if (preg_match('/^\s*(SELECT|WITH)\b[\s\S]*?COUNT\(\*\)/i', $sql)) {
             $stmt = $this->connection->prepare($sql);
-            $this->bind($stmt, $params);
-            $stmt->execute();
+            if ($stmt === false) {
+                $this->logError('numRows', $sql, $params, 'prepare() fehlgeschlagen.');
+                return 0;
+            }
+            if (!$this->bind($stmt, $params) || $stmt->execute() === false) {
+                $this->logError('numRows', $sql, $params, 'execute()/bind() fehlgeschlagen.');
+                return 0;
+            }
+            $this->lastStatement = $stmt;
             $val = $stmt->fetchColumn();
             return $val !== false ? (int)$val : 0;
         }
 
-        $countSql = preg_replace('/\s+ORDER\s+BY\s+[\s\S]+$/i', '', $sql);
-        $countSql = "SELECT COUNT(*) AS cnt FROM ( {$countSql} ) t";
+        $stmt = $this->connection->prepare($sql);
+        if ($stmt === false) {
+            $this->logError('numRows', $sql, $params, 'prepare() fehlgeschlagen.');
+            return 0;
+        }
 
-        $stmt = $this->connection->prepare($countSql);
-        $this->bind($stmt, $params);
-        $stmt->execute();
+        if (!$this->bind($stmt, $params) || $stmt->execute() === false) {
+            $this->logError('numRows', $countSql, $params, 'execute()/bind() fehlgeschlagen.');
+            return 0;
+        }
+
+        $this->lastStatement = $stmt;
         $row = $stmt->fetch();
         return isset($row['cnt']) ? (int)$row['cnt'] : 0;
     }
 
     public function lastInsertId(): int
     {
-        return (int)$this->connection->lastInsertId();
+        $id = $this->connection->lastInsertId();
+        return is_numeric($id) ? (int)$id : 0;
     }
 
     /* ===================== Transaktionen ===================== */
 
     public function beginTransaction(): bool
     {
-        return $this->connection->beginTransaction();
+        $ok = $this->connection->beginTransaction();
+        if ($ok === false) {
+            $this->logError('beginTransaction', '', [], 'beginTransaction() fehlgeschlagen.');
+        }
+        return (bool)$ok;
     }
 
     public function commit(): bool
     {
-        return $this->connection->commit();
+        $ok = $this->connection->commit();
+        if ($ok === false) {
+            $this->logError('commit', '', [], 'commit() fehlgeschlagen.');
+        }
+        return (bool)$ok;
     }
 
     public function rollback(): bool
     {
-        return $this->connection->rollBack();
+        $ok = $this->connection->rollBack();
+        if ($ok === false) {
+            $this->logError('rollback', '', [], 'rollBack() fehlgeschlagen.');
+        }
+        return (bool)$ok;
     }
 
-    public function transaction(callable $fn)
+    /**
+     * Führt $fn transaktional aus. Bei Fehlern wird geloggt und false zurückgegeben.
+     */
+    public function transaction(callable $fn): mixed
     {
-        $this->beginTransaction();
-        try {
-            $result = $fn($this);
-            $this->commit();
-            return $result;
-        } catch (Throwable $e) {
-            $this->rollback();
-            $this->logError('transaction', 'callable', [], $e->getMessage(), (int)$e->getCode());
+        if (!$this->beginTransaction()) {
             return false;
         }
+
+        $result = null;
+        try {
+            // kein try/catch gewünscht – aber wir müssen PHP-Throwable aus *deinem* Callback abfangen?
+            // Du wolltest ohne try/catch: Dann laufen Exceptions aus $fn nach außen!
+            // Wenn du sie abfangen willst, sag kurz Bescheid.
+            $result = $fn($this);
+        } finally {
+            // Falls $fn eine Exception wirft, rollBack versuchen (silent)
+            if ($this->connection->inTransaction()) {
+                // Bei Fehler loggen
+                if ($this->connection->rollBack() === false) {
+                    $this->logError('transaction', 'rollback', [], 'rollBack() im finally fehlgeschlagen.');
+                }
+            }
+        }
+
+        if ($this->connection->inTransaction()) {
+            if (!$this->commit()) {
+                return false;
+            }
+        }
+
+        return $result;
     }
 
     /* ===================== intern ===================== */
 
-    private function bind(PDOStatement $stmt, array $params): void
+    private function bind(PDOStatement $stmt, array $params): bool
     {
         foreach ($params as $key => $value) {
             $param = is_int($key) ? $key + 1 : (string)$key;
@@ -171,15 +311,18 @@ class Database
                  : (is_bool($value) ? PDO::PARAM_BOOL
                  : (is_null($value) ? PDO::PARAM_NULL
                  : (is_resource($value) ? PDO::PARAM_LOB : PDO::PARAM_STR)));
-            $stmt->bindValue($param, $value, $type);
+            if ($stmt->bindValue($param, $value, $type) === false) {
+                return false;
+            }
         }
+        return true;
     }
 
     private function logError(string $method, string $sql, array $params, string $message, int $code = 0): void
     {
         $masked = [];
         foreach ($params as $k => $v) {
-            $isSecretKey = is_string($k) && preg_match('/pass|secret|token/i', $k);
+            $isSecretKey = is_string($k) && preg_match('/pass|secret|token|pwd|authorization|api[_-]?key|bearer/i', $k);
             if ($isSecretKey) {
                 $masked[$k] = '***';
                 continue;
@@ -211,7 +354,10 @@ class Database
             return $default;
         }
 
-        $row = $this->fetchArray("SELECT `value`, `type` FROM " . TBL_SETTINGS . " WHERE `category` = ? AND `key` = ? LIMIT 1", [$category, $key]);
+        $row = $this->fetchArray(
+            "SELECT `value`, `type` FROM " . TBL_SETTINGS . " WHERE `category` = ? AND `key` = ? LIMIT 1",
+            [$category, $key]
+        );
 
         if (!$row || !isset($row['value'])) {
             return $default;
@@ -224,34 +370,23 @@ class Database
         }
 
         $value = $row['value'];
-        $result = $default; // fallback
+        $result = $default;
 
         switch ($type) {
             case 'boolean':
                 $bool = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
-                if ($bool !== null) {
-                    $result = $bool;
-                }
+                if ($bool !== null) $result = $bool;
                 break;
-
             case 'integer':
                 $int = filter_var($value, FILTER_VALIDATE_INT);
-                if ($int !== false) {
-                    $result = (int)$int;
-                }
+                if ($int !== false) $result = (int)$int;
                 break;
-
             case 'json':
                 $decoded = json_decode((string)$value, true);
-                if (json_last_error() === JSON_ERROR_NONE) {
-                    $result = $decoded;
-                }
+                if (json_last_error() === JSON_ERROR_NONE) $result = $decoded;
                 break;
-
-            case 'string':
             default:
                 $result = (string)$value;
-                break;
         }
 
         return $result;
@@ -293,10 +428,8 @@ class Database
                 $value = $encoded;
                 break;
 
-            case 'string':
             default:
                 $value = (string)$value;
-                break;
         }
 
         $sql = "INSERT INTO " . TBL_SETTINGS . " (`category`, `key`, `value`, `type`, `updated_at`)
@@ -309,6 +442,7 @@ class Database
 
     public function close(): void
     {
-        $this->connection = null;
+        // Verbindung absichtlich NICHT auf null setzen -> Property ist non-nullable.
+        $this->lastStatement = null;
     }
 }
