@@ -109,16 +109,26 @@ class RequestValidator
             return true; // nichts in clean setzen, data bleibt unangetastet
         }
 
+        // Pflichtfeld fehlt
         if ($required && !$exists) {
             return $this->fail($name, $this->msg('required'));
         }
+
+        // Feld existiert nicht (optional) -> clean = null, nicht konsumieren
         if (!$exists) {
-            // Feld nicht vorhanden -> clean = null, bleibt in $data unberührt (nicht konsumiert)
             $this->clean[$name] = null;
             return true;
         }
 
-        $value = $this->data[$name];
+        // -------------------------------
+        // WICHTIG: Ab hier existiert das Feld.
+        // Sofort den Rohwert sichern und KONSUMIEREN,
+        // damit ensureConsumed() es nicht später meldet.
+        // -------------------------------
+        $raw = $this->data[$name];
+        unset($this->data[$name]); // sofort konsumieren
+
+        $value = $raw;
 
         // trim nur für GET/POST-Strings
         if ($this->method !== 'FILES' && ($rules['trim'] ?? false) && is_string($value)) {
@@ -127,10 +137,14 @@ class RequestValidator
 
         $type = $rules['type'] ?? 'string';
         $cleanVal = $this->castAndValidateType($name, $type, $value, $rules);
+
+        // Wenn die Typ-/Wertprüfung fehlschlägt, sind Fehler bereits gesetzt.
+        // Feld ist bereits konsumiert -> kein _unconsumed später.
         if ($cleanVal === null && $this->lastError) {
             return false;
         }
 
+        // Optionaler Callback (z. B. Cross-Field-Check)
         if (isset($rules['callback']) && is_callable($rules['callback'])) {
             $msg = ($rules['callback'])($cleanVal, $this->data);
             if (is_string($msg) && $msg !== '') {
@@ -138,10 +152,11 @@ class RequestValidator
             }
         }
 
+        // Erfolgreich
         $this->clean[$name] = $cleanVal;
-        unset($this->data[$name]); // konsumieren
         return true;
     }
+
 
     public function ensureConsumed(): array
     {
