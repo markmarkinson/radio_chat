@@ -118,7 +118,7 @@ class SecureSession {
             
             // Neue Session-ID für Sicherheit
             if (!isset($_SESSION['initialized'])) {
-                session_regenerate_id(true);
+                @session_regenerate_id(true);
                 $_SESSION['initialized'] = true;
                 $_SESSION['created_at'] = time();
             }
@@ -128,7 +128,7 @@ class SecureSession {
         
         // Session-ID Validierung
         if (!$this->isValidSessionId($this->sessionId)) {
-            session_regenerate_id(true);
+            @session_regenerate_id(true);
             $this->sessionId = session_id();
         }
     }
@@ -254,7 +254,7 @@ class SecureSession {
         $this->csrfToken = $this->sessionData['csrf_token'];
         $this->isValid = true;
         
-        $this->logSecurityEvent('session_created');
+        //$this->logSecurityEvent('session_created');
     }
 
     /**
@@ -492,7 +492,7 @@ class SecureSession {
      */
     private function regenerateSessionId(): void {
         $oldId = $this->sessionId;
-        session_regenerate_id(true);
+        @session_regenerate_id(true);
         $this->sessionId = session_id();
         
         // Regeneration-Zeit aktualisieren
