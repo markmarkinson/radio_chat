@@ -70,19 +70,39 @@ class RequestValidator
      * @param string $method "GET" | "POST" | "FILES"
      * @param int|string $defaultMaxFileSize Upload-Default (z. B. "2MB", "500k", 1048576)
      */
-    public function __construct(string $method = 'GET', int|string $defaultMaxFileSize = '2MB')
+    public function __construct(string $method = null, int|string $defaultMaxFileSize = '2MB')
     {
-        $method = strtoupper($method);
+        // Methode bestimmen (falls nicht explizit übergeben)
+        $method = $method ? strtoupper($method) : strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
         $this->method = $method;
+
+        // Default-Upload-Limit vorbereiten
         $this->defaultMaxFileSize = is_int($defaultMaxFileSize)
             ? max(0, $defaultMaxFileSize)
             : max(0, $this->parseSizeToBytes((string)$defaultMaxFileSize));
 
-        $this->data = match ($method) {
-            'POST'  => $_POST  ?? [],
-            'FILES' => $_FILES ?? [],
-            default => $_GET   ?? [],
-        };
+        // Datenquelle nach Methode wählen
+        switch ($method) {
+            case 'GET':
+                $this->data = $_GET ?? [];
+                break;
+
+            case 'POST':
+                // Klassisch: Form-POST (inkl. multipart/form-data)
+                $this->data = $_POST ?? [];
+                break;
+
+            case 'FILES':
+                // Direkter FILES-Modus – nur $_FILES-Inhalte validieren
+                $this->data = $_FILES ?? [];
+                break;
+
+            // Methoden mit Body, die PHP nicht automatisch in $_POST mapped:
+            // PUT, PATCH, DELETE, OPTIONS, HEAD, TRACE, CONNECT
+            default:
+                $this->data = $this->parseInputBody();
+                break;
+        }
     }
 
     /** Eigene Texte setzen (nur Keys überschreiben, die du ändern willst) */
@@ -961,6 +981,40 @@ class RequestValidator
         return $plans;
     }
 
+    /** Body aus php://input passend zum Content-Type in ein Array parsen (JSON oder x-www-form-urlencoded) */
+    private function parseInputBody(): array
+    {
+        // Wenn bereits etwas in $_POST steht (z. B. bei manchen Servern), das nehmen
+        if (!empty($_POST)) {
+            return $_POST;
+        }
+
+        $raw = file_get_contents('php://input') ?: '';
+        if ($raw === '') return [];
+
+        $ct = strtolower((string)($_SERVER['CONTENT_TYPE'] ?? ''));
+        // Content-Type ohne Parameter (z. B. ; charset=utf-8) normalisieren
+        if (($pos = strpos($ct, ';')) !== false) {
+            $ct = substr($ct, 0, $pos);
+        }
+        $ct = trim($ct);
+
+        // JSON
+        if ($ct === 'application/json' || str_ends_with($ct, '+json')) {
+            $decoded = json_decode($raw, true);
+            return (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) ? $decoded : [];
+        }
+
+        // Form-Encoded
+        if ($ct === 'application/x-www-form-urlencoded') {
+            $parsed = [];
+            parse_str($raw, $parsed);
+            return is_array($parsed) ? $parsed : [];
+        }
+
+        // Sonst: leer (oder du entscheidest dich, raw als ['_raw' => $raw] durchzureichen)
+        return [];
+    }
 
     /* ===================== Größen/INI-Tools ===================== */
 
