@@ -121,7 +121,13 @@ if ($mode === 'POST' && $_SERVER['REQUEST_METHOD'] === 'POST' && $formId === 'po
     $v->validate('priority',['type'=>'enum','in'=>['low','medium','high']]);
 
     // array (direkt, z.B. aus checkboxes[] oder JSON-dekodiert)
-    $v->validate('features',['type'=>'array','min_count'=>1,'max_count'=>5,'unique'=>true,'allowed'=>['a','b','c','d']]);
+    $v->validate('features', [
+        'type'      => 'checkboxes',
+        'min_count' => 1,
+        'max_count' => 3,
+        'unique'    => true,
+        'allowed'   => ['search','share','export'],
+    ]);
 
     // json (+ Schema)
     $v->validate('profile',[
@@ -330,7 +336,7 @@ pre{white-space:pre-wrap}
                 </div>
                 <label>Features (array) – mehrere wählen:
                     <span class="small">
-                        <?php $f=$_POST['features']??['a']; foreach(['a','b','c','d'] as $x){$c=in_array($x,(array)$f,true)?'checked':''; echo "<label class='small'><input type='checkbox' name='features[]' value='".h($x)."' $c> ".h(strtoupper($x))."</label> ";} ?>
+                        <?php $f=$_POST['features']??['search']; foreach(['search','share','export'] as $x){$c=in_array($x,(array)$f,true)?'checked':''; echo "<label class='small'><input type='checkbox' name='features[]' value='".h($x)."' $c> ".h(strtoupper($x))."</label> ";} ?>
                     </span>
                 </label>
                 <label>Profil (JSON) <textarea name="profile" rows="4"><?= fieldValue('profile','{"bio":"Hallo Welt"}')?></textarea></label>

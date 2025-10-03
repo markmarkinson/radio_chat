@@ -350,9 +350,18 @@ class RequestValidator
 
             /* ===== Booleans / Optionen ===== */
             case 'checkbox': {
-                // Einzelne Checkbox → bool
-                $truthy = ['on','1',1,true,'true','yes'];
-                $out = in_array($value, $truthy, true);
+                // Wenn "in" gesetzt ist → wie radio/select behandeln
+                if (isset($rules['in']) && is_array($rules['in'])) {
+                    if (!in_array($value, $rules['in'], true)) {
+                        $this->fail($name, $this->msg('enum', implode(', ', $rules['in'])));
+                        break;
+                    }
+                    $out = $value;
+                } else {
+                    // Standard: einzelne Checkbox → bool
+                    $truthy = ['on','1',1,true,'true','yes'];
+                    $out = in_array($value, $truthy, true);
+                }
                 break;
             }
 
