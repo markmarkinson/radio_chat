@@ -382,39 +382,97 @@ class RequestValidator
 
             case 'select-multiple':
             case 'checkboxes': {
+                // Eingabe in Array konvertieren (unterstützt "a,b,c" oder ['a','b','c'])
                 $arr = is_array($value) ? $value : $toArray($value);
+
+                // Mindest-/Maximale Anzahl
                 $min = $rules['min_count'] ?? null;
                 $max = $rules['max_count'] ?? null;
-                if ($min !== null && count($arr) < $min) { $this->fail($name, $this->msg('array_min', (string)$min)); break; }
-                if ($max !== null && count($arr) > $max) { $this->fail($name, $this->msg('array_max', (string)$max)); break; }
-                if (!empty($rules['unique']) && count($arr) !== count(array_unique($arr, SORT_REGULAR))) {
-                    $this->fail($name, $this->msg('array_unique')); break;
+                if ($min !== null && count($arr) < $min) { 
+                    $this->fail($name, $this->msg('array_min', (string)$min)); 
+                    break; 
                 }
-                if (isset($rules['allowed']) && is_array($rules['allowed'])) {
+                if ($max !== null && count($arr) > $max) { 
+                    $this->fail($name, $this->msg('array_max', (string)$max)); 
+                    break; 
+                }
+
+                // Duplikate verhindern
+                if (!empty($rules['unique']) && count($arr) !== count(array_unique($arr, SORT_REGULAR))) {
+                    $this->fail($name, $this->msg('array_unique')); 
+                    break;
+                }
+
+                // "in" als Alias für "allowed" unterstützen
+                $allowed = $rules['allowed'] ?? ($rules['in'] ?? null);
+                if (isset($allowed) && is_array($allowed)) {
                     foreach ($arr as $v) {
-                        if (!in_array($v, $rules['allowed'], true)) { $this->fail($name, $this->msg('array_allowed')); break 2; }
+                        if (!in_array($v, $allowed, true)) {
+                            $this->fail($name, $this->msg('array_allowed'));
+                            break 2;
+                        }
                     }
                 }
+
+                // Indizes normalisieren
                 $out = array_values($arr);
                 break;
             }
 
             /* ===== Dateien ===== */
-            case 'file': {
-                if ($this->method !== 'FILES') { $this->fail($name, $this->msg('file_missing')); break; }
-                $validated = $this->validateSingleFile($name, $value, $rules);
-                if ($validated === null && $this->lastError) break;
-                $out = $validated;
+            case 'file':
+            case 'files': {
+                // Wenn nicht im FILES-Modus: je nach required Fehler oder null
+                if ($this->method !== 'FILES') {
+                    if (!($rules['required'] ?? false)) { $out = null; break; }
+                    $this->fail($name, $this->msg('file_missing')); 
+                    break;
+                }
+
+                // Nackt kein File-Feld? -> required beachten
+                if (!is_array($value)) {
+                    if (!($rules['required'] ?? false)) { $out = null; break; }
+                    $this->fail($name, $this->msg('file_missing')); 
+                    break;
+                }
+
+                // Erkennen, ob Mehrfach-Upload (typische $_FILES-Struktur mit name[])
+                $isMulti = (
+                    // Standard: $_FILES['field']['name'] ist ein Array
+                    (isset($value['name']) && is_array($value['name'])) ||
+
+                    // Bereits vor-normalisiertes Array von Dateien (selten, aber abdecken)
+                    (array_is_list($value) && isset($value[0]) && is_array($value[0]) && array_key_exists('tmp_name', $value[0]))
+                );
+
+                // Validieren
+                if ($isMulti) {
+                    $validated = $this->validateMultipleFiles($name, $value, $rules);
+                    if ($validated === null && $this->lastError) break;
+
+                    // min_files / max_files sind bereits in validateMultipleFiles() berücksichtigt
+                    // Rückgabeformat steuern
+                    if (!empty($rules['force_array']) || $type === 'files') {
+                        $out = $validated; // immer Array
+                    } else {
+                        // ohne force_array: wenn nur eine Datei, gib die eine zurück; sonst Array
+                        $out = (count($validated) === 1) ? $validated[0] : $validated;
+                    }
+                } else {
+                    // Einzeldatei
+                    $validated = $this->validateSingleFile($name, $value, $rules);
+                    if ($validated === null && $this->lastError) break;
+
+                    if (!empty($rules['force_array']) || $type === 'files') {
+                        // für Konsistenz optional immer als Array ausgeben
+                        $out = ($validated === null) ? [] : [$validated];
+                    } else {
+                        $out = $validated; // einzelnes File-Array oder null (wenn optional und kein Upload)
+                    }
+                }
                 break;
             }
 
-            case 'files': {
-                if ($this->method !== 'FILES') { $this->fail($name, $this->msg('file_missing')); break; }
-                $validated = $this->validateMultipleFiles($name, $value, $rules);
-                if ($validated === null && $this->lastError) break;
-                $out = $validated;
-                break;
-            }
 
             /* ===== Kontakt/Links ===== */
             case 'email': {

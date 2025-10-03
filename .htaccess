@@ -1,7 +1,17 @@
 RewriteEngine On
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^(.+)$ index.php?route=$1 [QSA,L]
+
+# Debug-Modus für lokale Entwicklung
+RewriteBase /
+
+# Statische Dateien direkt ausliefern
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule ^ - [L]
+
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Alle anderen Anfragen an index.php weiterleiten
+RewriteRule ^(.*)$ index.php?route=$1 [QSA,L]
 
 # Sicherheit
 <Files "config.php">

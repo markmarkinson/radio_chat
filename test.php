@@ -150,21 +150,26 @@ if ($mode === 'FILES' && $_SERVER['REQUEST_METHOD'] === 'POST' && $formId === 'f
     $vf = new RequestValidator('FILES','8MB');
 
     // Einzeldatei (Bild)
-    $vf->validate('avatar',[
-        'type'=>'file','required'=>true,'max_size'=>'4MB',
-        'ext'=>['jpg','jpeg','png','webp'],
-        'mimes'=>['image/jpeg','image/png','image/webp'],
-        'min_width'=>100,'min_height'=>100,'max_width'=>4000,'max_height'=>4000
+    $v->validate('avatar', [
+        'type'       => 'file',
+        'required'   => true,
+        'max_size'   => '4MB',
+        'ext'        => ['jpg','jpeg','png','webp'],
+        'mimes'      => ['image/jpeg','image/png','image/webp'],
+        'min_width'  => 100, 'min_height' => 100,
+        'max_width'  => 4000, 'max_height' => 4000,
     ]);
 
     // Mehrere Dateien
-    $vf->validate('gallery',[
-        'type'=>'files','min_files'=>0,'max_files'=>3,'max_size'=>'6MB',
-        'ext'=>['jpg','jpeg','png','webp','gif'],
-        'mimes'=>['image/jpeg','image/png','image/webp','image/gif'],
-        'max_width'=>6000,'max_height'=>6000
+    $v->validate('gallery', [
+        'type'       => 'files',  
+        'min_files'  => 1,
+        'max_files'  => 10,
+        'max_size'   => '10MB',
+        'ext'        => ['jpg','jpeg','png','webp','gif'],
+        'mimes'      => ['image/jpeg','image/png','image/webp','image/gif'],
     ]);
-
+    
     $results['unconsumed'] = $vf->ensureConsumed();
     $results['clean']      = $vf->getClean();
     $results['errors']     = $vf->getErrors();
